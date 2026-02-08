@@ -33,6 +33,7 @@ const COMMANDS_BY_SCREEN: Record<string, string[]> = {
     'ADAPTAR',
     'AÑADIR A FAVORITOS',
     'COMPARTIR',
+    'VER LO QUE ME HE PROBADO',
     'MODO COMPARACIÓN',
     'CARRUSEL',
     'ROTAR',
@@ -60,7 +61,8 @@ export default function VoiceCommandsBanner({ screen }: VoiceCommandsBannerProps
   
   const commandsText = useMemo(() => {
     const separator = '   •   ';
-    const fullText = commands.join(separator);
+    const normalized = commands.map(c => (c === 'ADAPTADOR' ? 'ADAPTAR' : c));
+    const fullText = normalized.join(separator);
     return `${fullText}${separator}${fullText}${separator}${fullText}`;
   }, [commands]);
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { RotateCw, Sparkles } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useApp } from '@/contexts/AppContext';
@@ -9,6 +9,8 @@ import { Viewer360 } from '@/components/Viewer360';
 
 export default function TryOn360Screen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ itemId?: string }>();
+  const preferredItemId = params.itemId ?? undefined;
   const { triedItems, scanData } = useApp();
   const reportActivity = useReportActivity();
   const [selectedTryOnImage, setSelectedTryOnImage] = useState<string | null>(null);
@@ -16,19 +18,24 @@ export default function TryOn360Screen() {
 
   const selectedItemIdRef = useRef<string | null>(null);
 
-  // Mostrar siempre el 360º más reciente (triedItems tiene el más nuevo primero)
+  // Si viene itemId por ruta (desde Espejo: favorito seleccionado), preferir ese ítem; si tiene 360 en sesión, mostrarlo
   const refreshSelection = useCallback(() => {
-    if (triedItems.length > 0) {
-      const itemsWith360 = triedItems.filter(ti => ti.view360?.isReady);
-      const itemWith360 = itemsWith360[0] ?? null; // [0] = más reciente
-      const item = itemWith360 || triedItems[0];
-      if (item?.compositeImage) {
-        selectedItemIdRef.current = item.item.id;
-        setSelectedTryOnImage(item.compositeImage);
-        setSelectedItemName(item.item.name);
-      }
+    if (triedItems.length === 0) return;
+    let item: (typeof triedItems)[0] | null = null;
+    if (preferredItemId) {
+      const preferred = triedItems.find(ti => ti.item.id === preferredItemId);
+      if (preferred?.compositeImage) item = preferred; // puede tener view360 en sesión
     }
-  }, [triedItems]);
+    if (!item) {
+      const itemsWith360 = triedItems.filter(ti => ti.view360?.isReady);
+      item = itemsWith360[0] ?? triedItems[0] ?? null;
+    }
+    if (item?.compositeImage) {
+      selectedItemIdRef.current = item.item.id;
+      setSelectedTryOnImage(item.compositeImage);
+      setSelectedItemName(item.item.name);
+    }
+  }, [triedItems, preferredItemId]);
 
   useEffect(() => {
     refreshSelection();

@@ -284,7 +284,16 @@ export default function WelcomeScreen() {
     outputRange: ["0deg", "360deg"],
   });
 
-  // Boot video inicial
+  // Fallback: si el boot video no termina en 8s (ej. error en web), saltar a login/home
+  useEffect(() => {
+    if (!showBootVideo) return;
+    const t = setTimeout(() => {
+      setShowBootVideo(false);
+      setBootVideoFinished(true);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [showBootVideo]);
+
   if (showBootVideo) {
     return (
       <BootVideo360

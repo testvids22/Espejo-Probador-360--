@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Platform } from 'react-native';
@@ -78,6 +78,32 @@ export type CustomCatalog = {
   loadedAt: string;
 };
 
+/** Estadísticas anónimas persistentes: no se borran al resetear/borrar perfil. */
+export type PersistentAnalytics = {
+  totalTries: number;
+  totalFavorites: number;
+  totalShared: number;
+  favoriteCategories: Record<string, number>;
+  favoriteBrands: Record<string, number>;
+  mostTriedColors: Record<string, number>;
+  priceRange: { min: number; max: number; avg: number };
+  /** Últimas pruebas anónimas (para Analytics e Insights); max 30 */
+  recentTriesAnonymous: Array<{ category: string; brand: string; name: string; price: number; date: string }>;
+  lastUpdated: string;
+};
+
+const EMPTY_PERSISTENT_ANALYTICS: PersistentAnalytics = {
+  totalTries: 0,
+  totalFavorites: 0,
+  totalShared: 0,
+  favoriteCategories: {},
+  favoriteBrands: {},
+  mostTriedColors: {},
+  priceRange: { min: Infinity, max: 0, avg: 0 },
+  recentTriesAnonymous: [],
+  lastUpdated: new Date().toISOString(),
+};
+
 type AppState = {
   scanData: ScanData | null;
   favorites: ClothingItem[];
@@ -91,6 +117,8 @@ type AppState = {
   pendingCatalogItemId: string | null;
   customCatalog: CustomCatalog | null;
   autoTriggerDetection: boolean;
+  /** Estadísticas anónimas: no se borran al borrar perfil (para Analytics/Insights). */
+  persistentAnalytics: PersistentAnalytics;
 };
 
 const STORAGE_KEYS = {
@@ -102,9 +130,19 @@ const STORAGE_KEYS = {
   PROFILES: '@app_profiles',
   CUSTOM_CATALOG: '@app_custom_catalog',
   SHOW_BOOT_VIDEO: '@app_show_boot_video',
+  /** No se borra con clearAllProfileData. */
+  PERSISTENT_ANALYTICS: '@app_persistent_analytics',
 };
 
 const MAX_PROFILES = 50;
+
+/** Para no persistir vídeos 360º (peso): guardamos solo metadatos; URLs/frames quedan en sesión en memoria. */
+function triedItemsForStorage(items: TriedItem[]): TriedItem[] {
+  return items.map(ti => ({
+    ...ti,
+    view360: ti.view360 ? { isReady: false, generating: false } : undefined,
+  }));
+}
 
 const DEFAULT_PROFILE: UserProfile = {
   id: 'default',
@@ -126,15 +164,17 @@ export const [AppProvider, useApp] = createContextHook(() => {
     pendingCatalogItemId: null,
     customCatalog: null,
     autoTriggerDetection: false,
+    persistentAnalytics: EMPTY_PERSISTENT_ANALYTICS,
   });
 
   const loadPersistedData = useCallback(async () => {
     try {
-      // 1. Load global settings first (profiles and current user profile)
-      const [userProfileStr, profilesStr, customCatalogStr] = await Promise.all([
+      // 1. Load global / persistent data (no se borra al borrar perfil)
+      const [userProfileStr, profilesStr, customCatalogStr, persistentAnalyticsStr] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE),
         AsyncStorage.getItem(STORAGE_KEYS.PROFILES),
         AsyncStorage.getItem(STORAGE_KEYS.CUSTOM_CATALOG),
+        AsyncStorage.getItem(STORAGE_KEYS.PERSISTENT_ANALYTICS),
       ]);
 
       const userProfile = userProfileStr ? JSON.parse(userProfileStr) : DEFAULT_PROFILE;
@@ -142,6 +182,9 @@ export const [AppProvider, useApp] = createContextHook(() => {
         ? JSON.parse(profilesStr).slice(0, MAX_PROFILES) 
         : [DEFAULT_PROFILE];
       const customCatalog = customCatalogStr ? JSON.parse(customCatalogStr) : null;
+      const persistentAnalytics: PersistentAnalytics = persistentAnalyticsStr
+        ? { ...EMPTY_PERSISTENT_ANALYTICS, ...JSON.parse(persistentAnalyticsStr), recentTriesAnonymous: (JSON.parse(persistentAnalyticsStr).recentTriesAnonymous || []).slice(0, 30) }
+        : EMPTY_PERSISTENT_ANALYTICS;
 
       // 2. Load profile-specific data
       const profileId = userProfile.id;
@@ -175,6 +218,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
         isLoading: false,
         pendingAutoTryOn: false,
         customCatalog,
+        persistentAnalytics,
         autoTriggerDetection: false,
       });
     } catch (error) {
@@ -239,6 +283,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const clearAllProfileData = useCallback(async () => {
     try {
       const profileId = state.userProfile.id;
+      // Solo datos del perfil. NO borrar: CUSTOM_CATALOG, PERSISTENT_ANALYTICS (catálogos y estadísticas se conservan).
       await AsyncStorage.multiRemove([
         `${STORAGE_KEYS.SCAN_DATA}_${profileId}`,
         `${STORAGE_KEYS.SIZE_DETECTOR}_${profileId}`,
@@ -293,7 +338,25 @@ export const [AppProvider, useApp] = createContextHook(() => {
         console.error('Error toggling favorite:', error);
       });
 
-      return { ...prev, favorites: newFavorites };
+      const pa = prev.persistentAnalytics;
+      const nextPa: PersistentAnalytics = isFavorite
+        ? {
+            ...pa,
+            totalFavorites: Math.max(0, pa.totalFavorites - 1),
+            favoriteCategories: { ...pa.favoriteCategories, [item.category]: Math.max(0, (pa.favoriteCategories[item.category] || 0) - 1) },
+            favoriteBrands: { ...pa.favoriteBrands, [item.brand]: Math.max(0, (pa.favoriteBrands[item.brand] || 0) - 1) },
+            lastUpdated: new Date().toISOString(),
+          }
+        : {
+            ...pa,
+            totalFavorites: pa.totalFavorites + 1,
+            favoriteCategories: { ...pa.favoriteCategories, [item.category]: (pa.favoriteCategories[item.category] || 0) + 1 },
+            favoriteBrands: { ...pa.favoriteBrands, [item.brand]: (pa.favoriteBrands[item.brand] || 0) + 1 },
+            lastUpdated: new Date().toISOString(),
+          };
+      AsyncStorage.setItem(STORAGE_KEYS.PERSISTENT_ANALYTICS, JSON.stringify(nextPa)).catch(() => {});
+
+      return { ...prev, favorites: newFavorites, persistentAnalytics: nextPa };
     });
   }, [state.userProfile.id]);
 
@@ -302,6 +365,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, [state.favorites]);
 
   const addTriedItem = useCallback(async (item: ClothingItem, compositeImage?: string, userPhoto?: string) => {
+    const now = new Date().toISOString();
     setState(prev => {
       const existingIndex = prev.triedItems.findIndex(ti => ti.item.id === item.id);
       
@@ -310,23 +374,44 @@ export const [AppProvider, useApp] = createContextHook(() => {
         newTriedItems = [...prev.triedItems];
         newTriedItems[existingIndex] = {
           item,
-          date: new Date().toISOString(),
+          date: now,
           compositeImage,
           userPhoto,
         };
       } else {
         newTriedItems = [
-          { item, date: new Date().toISOString(), compositeImage, userPhoto },
+          { item, date: now, compositeImage, userPhoto },
           ...prev.triedItems,
         ];
       }
 
       const key = `${STORAGE_KEYS.TRIED_ITEMS}_${state.userProfile.id}`;
-      AsyncStorage.setItem(key, JSON.stringify(newTriedItems)).catch(error => {
+      AsyncStorage.setItem(key, JSON.stringify(triedItemsForStorage(newTriedItems))).catch(error => {
         console.error('Error adding tried item:', error);
       });
 
-      return { ...prev, triedItems: newTriedItems };
+      const pa = prev.persistentAnalytics;
+      const recent = [{ category: item.category, brand: item.brand, name: item.name, price: item.price, date: now }, ...pa.recentTriesAnonymous].slice(0, 30);
+      const isNewTry = existingIndex < 0;
+      const nextPa: PersistentAnalytics = isNewTry
+        ? {
+            ...pa,
+            totalTries: pa.totalTries + 1,
+            favoriteCategories: { ...pa.favoriteCategories, [item.category]: (pa.favoriteCategories[item.category] || 0) + 1 },
+            favoriteBrands: { ...pa.favoriteBrands, [item.brand]: (pa.favoriteBrands[item.brand] || 0) + 1 },
+            mostTriedColors: item.color ? { ...pa.mostTriedColors, [item.color]: (pa.mostTriedColors[item.color] || 0) + 1 } : pa.mostTriedColors,
+            priceRange: {
+              min: Math.min(pa.priceRange.min, item.price),
+              max: Math.max(pa.priceRange.max, item.price),
+              avg: (pa.priceRange.avg * pa.totalTries + item.price) / (pa.totalTries + 1),
+            },
+            recentTriesAnonymous: recent,
+            lastUpdated: now,
+          }
+        : { ...pa, recentTriesAnonymous: recent, lastUpdated: now };
+      AsyncStorage.setItem(STORAGE_KEYS.PERSISTENT_ANALYTICS, JSON.stringify(nextPa)).catch(() => {});
+
+      return { ...prev, triedItems: newTriedItems, persistentAnalytics: nextPa };
     });
   }, [state.userProfile.id]);
 
@@ -337,11 +422,15 @@ export const [AppProvider, useApp] = createContextHook(() => {
       );
 
       const key = `${STORAGE_KEYS.TRIED_ITEMS}_${state.userProfile.id}`;
-      AsyncStorage.setItem(key, JSON.stringify(newTriedItems)).catch(error => {
+      AsyncStorage.setItem(key, JSON.stringify(triedItemsForStorage(newTriedItems))).catch(error => {
         console.error('Error marking item as shared:', error);
       });
 
-      return { ...prev, triedItems: newTriedItems };
+      const pa = prev.persistentAnalytics;
+      const nextPa: PersistentAnalytics = { ...pa, totalShared: pa.totalShared + 1, lastUpdated: new Date().toISOString() };
+      AsyncStorage.setItem(STORAGE_KEYS.PERSISTENT_ANALYTICS, JSON.stringify(nextPa)).catch(() => {});
+
+      return { ...prev, triedItems: newTriedItems, persistentAnalytics: nextPa };
     });
   }, [state.userProfile.id]);
 
@@ -376,6 +465,25 @@ export const [AppProvider, useApp] = createContextHook(() => {
     return stats;
   }, [state.triedItems, state.favorites]);
 
+  /** Estadísticas persistentes (anónimas): no se borran al borrar perfil. Para pestaña Analytics e Insights. */
+  const getPersistentPreferenceStats = useCallback(() => {
+    const pa = state.persistentAnalytics;
+    return {
+      favoriteCategories: { ...pa.favoriteCategories },
+      favoriteBrands: { ...pa.favoriteBrands },
+      priceRange: { ...pa.priceRange, avg: pa.totalTries > 0 ? pa.priceRange.avg : 0 },
+      mostTriedColors: { ...pa.mostTriedColors },
+      totalTries: pa.totalTries,
+      totalFavorites: pa.totalFavorites,
+      totalShared: pa.totalShared,
+    };
+  }, [state.persistentAnalytics]);
+
+  /** Últimas pruebas anónimas para el prompt de Insights (perfil). */
+  const getPersistentRecentTriesForInsights = useCallback(() => {
+    return state.persistentAnalytics.recentTriesAnonymous.slice(0, 20);
+  }, [state.persistentAnalytics.recentTriesAnonymous]);
+
   const saveSizeDetectorData = useCallback(async (data: Omit<SizeDetectorData, 'scanId'>) => {
     if (!state.scanData?.scanId) {
       console.error('Cannot save size detector data without a scan ID');
@@ -400,124 +508,58 @@ export const [AppProvider, useApp] = createContextHook(() => {
     console.log('[AppContext] updateTriedItemWithComposite llamado');
     console.log('[AppContext] Item ID:', itemId);
     console.log('[AppContext] CompositeImage existe:', !!compositeImage);
-    console.log('[AppContext] CompositeImage tipo:', compositeImage?.substring(0, 20) || 'undefined');
 
     setState(prev => {
       const existingItem = prev.triedItems.find(ti => ti.item.id === itemId);
-      const alreadyGenerating = existingItem?.view360?.generating === true;
-      const alreadyHasUrls = !!(existingItem?.view360?.wanUrl || existingItem?.view360?.klingUrl);
-      const skip360Generation = alreadyGenerating || alreadyHasUrls;
-      if (skip360Generation) {
-        console.log('[AppContext] ⏭️ No se inicia 360º: ya generando o ya tiene URLs para item', itemId);
-      }
-
       const newTriedItems = prev.triedItems.map(ti =>
         ti.item.id === itemId
           ? {
               ...ti,
               compositeImage,
               userPhoto,
-              view360: skip360Generation
-                ? (existingItem?.view360 || { generating: false, isReady: false })
-                : {
-                    ...ti.view360,
-                    generating: true,
-                    isReady: false,
-                  },
+              view360: existingItem?.view360 || { generating: false, isReady: false },
             }
           : ti
       );
 
       const key = `${STORAGE_KEYS.TRIED_ITEMS}_${prev.userProfile.id}`;
-      AsyncStorage.setItem(key, JSON.stringify(newTriedItems)).catch(error => {
+      AsyncStorage.setItem(key, JSON.stringify(triedItemsForStorage(newTriedItems))).catch(error => {
         console.error('Error updating tried item with composite:', error);
       });
 
-      // Iniciar generación 360º solo si no estaba ya generando ni tiene URLs (evitar 4x misma generación)
-      if (compositeImage && !skip360Generation) {
-        console.log('🚀 [AppContext] ========================================');
-        console.log('🚀 [AppContext] INICIANDO GENERACIÓN 360º');
-        console.log('🚀 [AppContext] Item ID:', itemId);
-        console.log('🚀 [AppContext] CompositeImage tipo:', compositeImage.substring(0, 50) + '...');
-        
-        // Verificar API keys antes de iniciar (solo para logging, no bloquear)
-        // Usar import dinámico con .then() en lugar de await para evitar problemas de sintaxis
-        import('@/lib/api-keys-expo').then(({ getApiKeysForExpo }) => {
-          return getApiKeysForExpo();
-        }).then((apiKeys) => {
-          console.log('🚀 [AppContext] API Key disponible:', !!apiKeys.FAL_KEY && apiKeys.FAL_KEY.length > 20);
-          console.log('🚀 [AppContext] API Key valor (primeros 10):', apiKeys.FAL_KEY ? `${apiKeys.FAL_KEY.substring(0, 10)}...` : 'NO CONFIGURADA');
-          console.log('🚀 [AppContext] API Key longitud:', apiKeys.FAL_KEY ? apiKeys.FAL_KEY.length : 0);
-          
-          // NO bloquear - dejar que generate360InBackground maneje el error
-          // Esto permite que al menos intente hacer la solicitud a FAL AI
-          if (!apiKeys.FAL_KEY || apiKeys.FAL_KEY.length < 20) {
-            console.warn('⚠️ [AppContext] API Key parece no estar configurada, pero intentaremos de todas formas');
-            console.warn('⚠️ [AppContext] Si falla, será por falta de API key y se mostrará el error correspondiente');
-          }
-        }).catch((error) => {
-          console.warn('⚠️ [AppContext] Error al verificar API keys:', error);
-          // Continuar de todas formas
-        });
-        console.log('🚀 [AppContext] URL de imagen TryOn:', compositeImage.substring(0, 100) + '...');
-        console.log('🚀 [AppContext] Tipo:', compositeImage.startsWith('data:') ? 'Data URL' : 'URL');
-        
-        // Anuncio por voz: inicio de generación (solo en móvil, sin alerts web)
-        if (Platform.OS !== 'web') {
-          import('expo-speech').then((SpeechModule) => {
-            SpeechModule.default.speak('Estoy preparando una sorpresa especial. Podrás ver cómo te queda desde todos los ángulos. Te avisaré cuando esté lista.', {
-              language: 'es-ES',
-              rate: 0.9,
-            });
-          }).catch(() => {
-            // Si falla el import, continuar sin anuncio
-          });
-        }
-        
-        import('../lib/generate-360-background').then(({ generate360InBackground }) => {
-          console.log('🚀 [AppContext] generate360InBackground importado correctamente');
-          console.log('🚀 [AppContext] Llamando a generate360InBackground...');
-          
-            // Generar en paralelo y actualizar incrementalmente
-            generate360InBackground(compositeImage).then((result) => {
-            console.log('✅ [AppContext] ========================================');
-            console.log('✅ [AppContext] Generación 360º completada');
-            console.log('✅ [AppContext] ========================================');
-            console.log('✅ [AppContext] Result.success:', result.success, 'klingUrl:', result.klingUrl ? '✅' : '❌');
-            console.log('✅ [AppContext] ========================================');
-            
-            // Solo KLING: actualizar en cuanto esté listo para que el vídeo aparezca al instante
-            if (result.klingUrl) {
-              console.log('✅ [AppContext] KLING listo, actualizando estado...');
-              setState(prevState => {
-                const updatedTriedItems = prevState.triedItems.map(ti => {
-                  if (ti.item.id === itemId) {
-                    const newView360 = {
-                      ...ti.view360,
-                      wanUrl: undefined,
-                      klingUrl: result.klingUrl,
-                      carouselFrames: result.carouselFrames || [],
-                      isReady: true,
-                      generating: false,
-                    };
-                    return { ...ti, view360: newView360 };
-                  }
-                  return ti;
-                });
-                const storageKey = `${STORAGE_KEYS.TRIED_ITEMS}_${prevState.userProfile.id}`;
-                AsyncStorage.setItem(storageKey, JSON.stringify(updatedTriedItems)).catch(console.error);
-                return { ...prevState, triedItems: updatedTriedItems };
-              });
-            }
-          }).catch((error) => {
-            console.error('❌ [AppContext] Error en generación 360º:', error);
-            console.error('❌ [AppContext] Detalles del error:', error.message, error.stack);
-            
-            // Mostrar alert con el error en web
-            if (Platform.OS === 'web') {
-              const errorMessage = error?.message || error?.toString() || 'Error desconocido';
-              alert(`❌ Error en generación 360º:\n\n${errorMessage}\n\nRevisa la consola (F12) para más detalles.`);
-            }
+      return { ...prev, triedItems: newTriedItems };
+    });
+  }, [state.userProfile.id]);
+
+  // Ref para abrir la pestaña 360º al terminar, con itemId para que la pestaña muestre ese favorito
+  const on360ReadyOpenTabRef = React.useRef<((itemId?: string) => void) | null>(null);
+
+  // Generación 360º solo bajo petición explícita (p. ej. comando de voz "sí quiero")
+  // compositeImageOverride: si la prenda aún no tiene composite en estado (p. ej. 2.ª prenda), pasar la imagen recién guardada
+  // onReady: si se pasa, al terminar se llama con itemId para abrir 360º mostrando ese ítem
+  const start360GenerationForItem = useCallback((itemId: string, compositeImageOverride?: string, onReady?: (itemId?: string) => void) => {
+    if (onReady) {
+      on360ReadyOpenTabRef.current = onReady;
+    }
+    setState(prev => {
+      const item = prev.triedItems.find(ti => ti.item.id === itemId);
+      const compositeImage = compositeImageOverride ?? item?.compositeImage;
+      const alreadyGenerating = item?.view360?.generating === true;
+      const alreadyReady = !!(item?.view360?.wanUrl || item?.view360?.klingUrl);
+      if (!compositeImage || alreadyGenerating || alreadyReady) {
+        return prev;
+      }
+      const newTriedItems = prev.triedItems.map(ti =>
+        ti.item.id === itemId
+          ? { ...ti, view360: { ...ti.view360, generating: true, isReady: false } }
+          : ti
+      );
+      const key = `${STORAGE_KEYS.TRIED_ITEMS}_${prev.userProfile.id}`;
+      AsyncStorage.setItem(key, JSON.stringify(triedItemsForStorage(newTriedItems))).catch(console.error);
+
+      import('../lib/generate-360-background').then(({ generate360InBackground }) => {
+        generate360InBackground(compositeImage).then((result) => {
+          if (result.klingUrl) {
             setState(prevState => {
               const updatedTriedItems = prevState.triedItems.map(ti =>
                 ti.item.id === itemId
@@ -525,18 +567,51 @@ export const [AppProvider, useApp] = createContextHook(() => {
                       ...ti,
                       view360: {
                         ...ti.view360,
+                        wanUrl: undefined,
+                        klingUrl: result.klingUrl,
+                        carouselFrames: result.carouselFrames || [],
+                        isReady: true,
                         generating: false,
-                        isReady: false,
-                      }
+                      },
                     }
                   : ti
               );
+              const storageKey = `${STORAGE_KEYS.TRIED_ITEMS}_${prevState.userProfile.id}`;
+              AsyncStorage.setItem(storageKey, JSON.stringify(triedItemsForStorage(updatedTriedItems))).catch(console.error);
               return { ...prevState, triedItems: updatedTriedItems };
             });
-          });
+            const openTab = on360ReadyOpenTabRef.current;
+            on360ReadyOpenTabRef.current = null;
+            if (openTab) {
+              try {
+                openTab(itemId);
+              } catch (e) {
+                console.warn('on360Ready callback error:', e);
+              }
+            }
+            if (Platform.OS !== 'web') {
+              import('expo-speech').then((Speech) => {
+                Speech.default.speak('Vista de tres sesenta lista. Ya puedes ver cómo te queda desde todos los ángulos.', { language: 'es-ES', rate: 0.9 });
+              }).catch(() => {});
+            }
+          }
+        }).catch((error) => {
+          console.error('❌ [AppContext] Error en generación 360º:', error);
+          on360ReadyOpenTabRef.current = null;
+          if (Platform.OS === 'web') {
+            const errorMessage = error?.message || error?.toString() || 'Error desconocido';
+            alert(`❌ Error en generación 360º:\n\n${errorMessage}`);
+          }
+          setState(prevState => ({
+            ...prevState,
+            triedItems: prevState.triedItems.map(ti =>
+              ti.item.id === itemId
+                ? { ...ti, view360: { ...ti.view360, generating: false, isReady: false } }
+                : ti
+            ),
+          }));
         });
-      }
-
+      });
       return { ...prev, triedItems: newTriedItems };
     });
   }, [state.userProfile.id]);
@@ -648,7 +723,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
           : ti
       );
       const key = `${STORAGE_KEYS.TRIED_ITEMS}_${prev.userProfile.id}`;
-      AsyncStorage.setItem(key, JSON.stringify(updatedTriedItems)).catch(console.error);
+      AsyncStorage.setItem(key, JSON.stringify(triedItemsForStorage(updatedTriedItems))).catch(console.error);
       return { ...prev, triedItems: updatedTriedItems };
     });
   }, [state.userProfile.id]);
@@ -664,18 +739,21 @@ export const [AppProvider, useApp] = createContextHook(() => {
     markItemAsShared,
     recentTriedItems,
     getPreferenceStats,
+    getPersistentPreferenceStats,
+    getPersistentRecentTriesForInsights,
     saveSizeDetectorData,
     updateUserProfile,
     addProfile,
     switchProfile,
     updateTriedItemWithComposite,
+    start360GenerationForItem,
     updateTriedItemView360Frames,
     setPendingAutoTryOn,
     setPendingCatalogItemId,
     setCustomCatalog,
     clearCustomCatalog,
     setAutoTriggerDetection,
-  }), [state, saveScanData, clearScanData, clearAllProfileData, toggleFavorite, isFavorite, addTriedItem, markItemAsShared, recentTriedItems, getPreferenceStats, saveSizeDetectorData, updateUserProfile, addProfile, switchProfile, updateTriedItemWithComposite, updateTriedItemView360Frames, setPendingAutoTryOn, setPendingCatalogItemId, setCustomCatalog, clearCustomCatalog, setAutoTriggerDetection]);
+  }), [state, saveScanData, clearScanData, clearAllProfileData, toggleFavorite, isFavorite, addTriedItem, markItemAsShared, recentTriedItems, getPreferenceStats, getPersistentPreferenceStats, getPersistentRecentTriesForInsights, saveSizeDetectorData, updateUserProfile, addProfile, switchProfile, updateTriedItemWithComposite, start360GenerationForItem, updateTriedItemView360Frames, setPendingAutoTryOn, setPendingCatalogItemId, setCustomCatalog, clearCustomCatalog, setAutoTriggerDetection]);
 });
 
 export function useFilteredFavorites(category?: string) {

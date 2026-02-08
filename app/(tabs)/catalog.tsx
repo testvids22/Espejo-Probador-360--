@@ -555,188 +555,186 @@ export default function CatalogScreen() {
     }
   }, [customItemName, customItemImage, customItemCategory, customItemBrand, customItemPrice, addTriedItem, setPendingCatalogItemId, router]);
 
-  useEffect(() => {
-    categories.forEach((category: string) => {
-      const commandId = `select-category-${category.toLowerCase()}`;
-      registerCommand(commandId, {
+  // Comandos de catálogo solo cuando esta pestaña tiene foco: así "primera", "probar Zara", etc. no se interpretan en Espejo
+  useFocusEffect(
+    useCallback(() => {
+      const brandVariations: { [key: string]: string[] } = {
+        'zara': ['zara', 'sara', 'sarra', 'zarra', 'la zara'],
+        'mango': ['mango', 'mangó', 'el mango', 'mangoo'],
+        'corte ingles': [
+          'corte ingles', 'corte inglés', 'el corte ingles', 'el corte inglés',
+          'corteingles', 'corteinglés', 'corte', 'el corte', 'inglés', 'ingles'
+        ]
+      };
+
+      categories.forEach((category: string) => {
+        const commandId = `select-category-${category.toLowerCase()}`;
+        registerCommand(commandId, {
+          patterns: [
+            category.toLowerCase(),
+            `mostrar ${category.toLowerCase()}`,
+            `ver ${category.toLowerCase()}`,
+            `categoría ${category.toLowerCase()}`,
+          ],
+          action: () => {
+            handleCategoryPress(category);
+          },
+          description: `seleccionar categoría ${category}`,
+        });
+      });
+
+      Object.entries(brandVariations).forEach(([brand, variations]) => {
+        const commandId = `select-brand-${brand.replace(/\s+/g, '-')}`;
+        const allPatterns = [
+          ...variations,
+          ...variations.map(v => `mostrar ${v}`),
+          ...variations.map(v => `ver ${v}`),
+          ...variations.map(v => `marca ${v}`),
+          ...variations.map(v => `filtrar ${v}`),
+          ...variations.map(v => `buscar ${v}`),
+        ];
+        registerCommand(commandId, {
+          patterns: allPatterns,
+          action: () => {
+            setSearchQuery(brand === 'corte ingles' ? 'CORTE INGLES' : brand.toUpperCase());
+            speakConfirmation(`Filtrando por marca ${brand}`);
+          },
+          description: '',
+        });
+      });
+
+      registerCommand('catalog-select-generic', {
         patterns: [
-          category.toLowerCase(),
-          `mostrar ${category.toLowerCase()}`,
-          `ver ${category.toLowerCase()}`,
-          `categoría ${category.toLowerCase()}`,
+          'seleccionar', 'selecciona', 'seleccionando', 'elegir', 'escoger',
+          'probar', 'probando', 'probar esta', 'probar esto', 'quiero esta', 'quiero este',
+          'me gusta', 'esta', 'este', 'esa', 'ese'
         ],
         action: () => {
-          handleCategoryPress(category);
-        },
-        description: `seleccionar categoría ${category}`,
-      });
-    });
-
-    const brandVariations: { [key: string]: string[] } = {
-      'zara': ['zara', 'sara', 'sarra', 'zarra', 'la zara'],
-      'mango': ['mango', 'mangó', 'el mango', 'mangoo'],
-      'corte ingles': [
-        'corte ingles', 'corte inglés', 'el corte ingles', 'el corte inglés',
-        'corteingles', 'corteinglés', 'corte', 'el corte', 'inglés', 'ingles'
-      ]
-    };
-    
-    Object.entries(brandVariations).forEach(([brand, variations]) => {
-      const commandId = `select-brand-${brand.replace(/\s+/g, '-')}`;
-      const allPatterns = [
-        ...variations,
-        ...variations.map(v => `mostrar ${v}`),
-        ...variations.map(v => `ver ${v}`),
-        ...variations.map(v => `marca ${v}`),
-        ...variations.map(v => `filtrar ${v}`),
-        ...variations.map(v => `buscar ${v}`),
-      ];
-      registerCommand(commandId, {
-        patterns: allPatterns,
-        action: () => {
-          setSearchQuery(brand === 'corte ingles' ? 'CORTE INGLES' : brand.toUpperCase());
-          speakConfirmation(`Filtrando por marca ${brand}`);
+          if (filteredClothes.length > 0) {
+            handleTryOn(filteredClothes[0], true);
+          } else {
+            speakConfirmation('No hay prendas disponibles');
+          }
         },
         description: '',
       });
-    });
 
-
-    registerCommand('catalog-select-generic', {
-      patterns: [
-        'seleccionar', 'selecciona', 'seleccionando', 'elegir', 'escoger',
-        'probar', 'probando', 'probar esta', 'probar esto', 'quiero esta', 'quiero este',
-        'me gusta', 'esta', 'este', 'esa', 'ese'
-      ],
-      action: () => {
-        if (filteredClothes.length > 0) {
-          handleTryOn(filteredClothes[0], true);
-        } else {
-          speakConfirmation('No hay prendas disponibles');
-        }
-      },
-      description: '',
-    });
-
-    registerCommand('catalog-try-first', {
-      patterns: [
-        'probar primera', 'probar primero', 'primera prenda', 'primera',
-        'seleccionar primera', 'seleccionar primero', 'la primera'
-      ],
-      action: () => {
-        if (filteredClothes.length > 0) {
-          handleTryOn(filteredClothes[0], true);
-        }
-      },
-      description: '',
-    });
-
-    registerCommand('catalog-try-second', {
-      patterns: [
-        'probar segunda', 'segunda prenda', 'segunda', 'la segunda',
-        'seleccionar segunda', 'probar segundo', 'segundo'
-      ],
-      action: () => {
-        if (filteredClothes.length >= 2) {
-          handleTryOn(filteredClothes[1], true);
-        }
-      },
-      description: '',
-    });
-
-    registerCommand('catalog-try-third', {
-      patterns: [
-        'probar tercera', 'tercera prenda', 'la tercera',
-        'seleccionar tercera', 'probar tercero'
-      ],
-      action: () => {
-        if (filteredClothes.length >= 3) {
-          handleTryOn(filteredClothes[2], true);
-        }
-      },
-      description: '',
-    });
-
-    registerCommand('catalog-try-fourth', {
-      patterns: [
-        'probar cuarta', 'cuarta prenda', 'la cuarta',
-        'seleccionar cuarta', 'probar cuarto'
-      ],
-      action: () => {
-        if (filteredClothes.length >= 4) {
-          handleTryOn(filteredClothes[3], true);
-        }
-      },
-      description: '',
-    });
-
-    const generateNameVariations = (name: string): string[] => {
-      const lower = name.toLowerCase();
-      const words = lower.split(/\s+/);
-      const variations: string[] = [lower];
-      
-      words.forEach(word => {
-        if (word.length > 3) {
-          variations.push(word);
-        }
-      });
-      
-      const normalized = lower
-        .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i')
-        .replace(/ó/g, 'o').replace(/ú/g, 'u').replace(/ñ/g, 'n');
-      if (normalized !== lower) variations.push(normalized);
-      
-      return [...new Set(variations)];
-    };
-
-    filteredClothes.slice(0, 50).forEach((item: ClothingItem) => {
-      const nameVariations = generateNameVariations(item.name);
-      const commandId = `catalog-try-item-${item.id}`;
-      const allPatterns = [
-        ...nameVariations,
-        ...nameVariations.map(v => `probar ${v}`),
-        ...nameVariations.map(v => `seleccionar ${v}`),
-        ...nameVariations.map(v => `quiero ${v}`),
-        `${item.brand.toLowerCase()} ${item.name.toLowerCase()}`,
-      ];
-      registerCommand(commandId, {
-        patterns: allPatterns,
+      registerCommand('catalog-try-first', {
+        patterns: [
+          'probar primera', 'probar primero', 'primera prenda', 'primera',
+          'seleccionar primera', 'seleccionar primero', 'la primera'
+        ],
         action: () => {
-          handleTryOn(item, true);
+          if (filteredClothes.length > 0) {
+            handleTryOn(filteredClothes[0], true);
+          }
         },
         description: '',
       });
-    });
 
-    registerCommand('catalog-clear-search', {
-      patterns: ['limpiar búsqueda', 'borrar búsqueda', 'mostrar todo', 'ver todo'],
-      action: () => {
-        setSearchQuery('');
-        setSelectedCategory('Todos');
-        speakConfirmation('Filtros limpiados. Mostrando todas las prendas.');
-      },
-      description: 'limpiar filtros',
-    });
+      registerCommand('catalog-try-second', {
+        patterns: [
+          'probar segunda', 'segunda prenda', 'segunda', 'la segunda',
+          'seleccionar segunda', 'probar segundo', 'segundo'
+        ],
+        action: () => {
+          if (filteredClothes.length >= 2) {
+            handleTryOn(filteredClothes[1], true);
+          }
+        },
+        description: '',
+      });
 
-    return () => {
-      categories.forEach((category: string) => {
-        unregisterCommand(`select-category-${category.toLowerCase()}`);
+      registerCommand('catalog-try-third', {
+        patterns: [
+          'probar tercera', 'tercera prenda', 'la tercera',
+          'seleccionar tercera', 'probar tercero'
+        ],
+        action: () => {
+          if (filteredClothes.length >= 3) {
+            handleTryOn(filteredClothes[2], true);
+          }
+        },
+        description: '',
       });
-      Object.keys(brandVariations).forEach((brand) => {
-        unregisterCommand(`select-brand-${brand.replace(/\s+/g, '-')}`);
+
+      registerCommand('catalog-try-fourth', {
+        patterns: [
+          'probar cuarta', 'cuarta prenda', 'la cuarta',
+          'seleccionar cuarta', 'probar cuarto'
+        ],
+        action: () => {
+          if (filteredClothes.length >= 4) {
+            handleTryOn(filteredClothes[3], true);
+          }
+        },
+        description: '',
       });
-      unregisterCommand('catalog-select-generic');
-      unregisterCommand('catalog-try-first');
-      unregisterCommand('catalog-try-second');
-      unregisterCommand('catalog-try-third');
-      unregisterCommand('catalog-try-fourth');
-      unregisterCommand('catalog-clear-search');
-      
+
+      const generateNameVariations = (name: string): string[] => {
+        const lower = name.toLowerCase();
+        const words = lower.split(/\s+/);
+        const variations: string[] = [lower];
+        words.forEach(word => {
+          if (word.length > 3) {
+            variations.push(word);
+          }
+        });
+        const normalized = lower
+          .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i')
+          .replace(/ó/g, 'o').replace(/ú/g, 'u').replace(/ñ/g, 'n');
+        if (normalized !== lower) variations.push(normalized);
+        return [...new Set(variations)];
+      };
+
       filteredClothes.slice(0, 50).forEach((item: ClothingItem) => {
-        unregisterCommand(`catalog-try-item-${item.id}`);
+        const nameVariations = generateNameVariations(item.name);
+        const commandId = `catalog-try-item-${item.id}`;
+        const allPatterns = [
+          ...nameVariations,
+          ...nameVariations.map(v => `probar ${v}`),
+          ...nameVariations.map(v => `seleccionar ${v}`),
+          ...nameVariations.map(v => `quiero ${v}`),
+          `${item.brand.toLowerCase()} ${item.name.toLowerCase()}`,
+        ];
+        registerCommand(commandId, {
+          patterns: allPatterns,
+          action: () => {
+            handleTryOn(item, true);
+          },
+          description: '',
+        });
       });
-    };
-  }, [registerCommand, unregisterCommand, filteredClothes, handleTryOn, handleCategoryPress, categories, speakConfirmation]);
+
+      registerCommand('catalog-clear-search', {
+        patterns: ['limpiar búsqueda', 'borrar búsqueda', 'mostrar todo', 'ver todo'],
+        action: () => {
+          setSearchQuery('');
+          setSelectedCategory('Todos');
+          speakConfirmation('Filtros limpiados. Mostrando todas las prendas.');
+        },
+        description: 'limpiar filtros',
+      });
+
+      return () => {
+        categories.forEach((category: string) => {
+          unregisterCommand(`select-category-${category.toLowerCase()}`);
+        });
+        Object.keys(brandVariations).forEach((brand) => {
+          unregisterCommand(`select-brand-${brand.replace(/\s+/g, '-')}`);
+        });
+        unregisterCommand('catalog-select-generic');
+        unregisterCommand('catalog-try-first');
+        unregisterCommand('catalog-try-second');
+        unregisterCommand('catalog-try-third');
+        unregisterCommand('catalog-try-fourth');
+        unregisterCommand('catalog-clear-search');
+        filteredClothes.slice(0, 50).forEach((item: ClothingItem) => {
+          unregisterCommand(`catalog-try-item-${item.id}`);
+        });
+      };
+    }, [registerCommand, unregisterCommand, filteredClothes, handleTryOn, handleCategoryPress, categories, speakConfirmation])
+  );
 
   useFocusEffect(
     useCallback(() => {

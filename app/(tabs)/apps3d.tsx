@@ -10,10 +10,10 @@ const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 60) / 2;
 
 export default function AnalyticsScreen() {
-  const { getPreferenceStats, triedItems } = useApp();
+  const { getPersistentPreferenceStats, persistentAnalytics } = useApp();
   const { registerCommand, unregisterCommand } = useVoice();
   const scrollViewRef = useRef<ScrollView>(null);
-  const stats = useMemo(() => getPreferenceStats(), [getPreferenceStats]);
+  const stats = useMemo(() => getPersistentPreferenceStats(), [getPersistentPreferenceStats]);
 
   const topCategories = useMemo(() => {
     return Object.entries(stats.favoriteCategories)
@@ -29,10 +29,10 @@ export default function AnalyticsScreen() {
 
   const recentActivity = useMemo(() => {
     const lastWeek = Date.now() - (7 * 24 * 60 * 60 * 1000);
-    return triedItems.filter(item => 
-      new Date(item.date).getTime() > lastWeek
+    return persistentAnalytics.recentTriesAnonymous.filter(r => 
+      new Date(r.date).getTime() > lastWeek
     ).length;
-  }, [triedItems]);
+  }, [persistentAnalytics.recentTriesAnonymous]);
 
   const maxCategoryValue = useMemo(() => {
     return Math.max(...Object.values(stats.favoriteCategories), 1);

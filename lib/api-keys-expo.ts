@@ -17,11 +17,15 @@ declare global {
 
 const API_CONFIG_KEY = 'smart-mirror-api-config';
 
+export type OptionalApiConfig = { name: string; key: string };
+
 // API Keys por defecto (se incluyen en la build)
-// NOTA: Las keys reales se configuran en Vercel como variables de entorno
+// NOTA: Las keys reales se configuran en Vercel como variables de entorno o en Ajustes (persistentes)
 const DEFAULT_API_KEYS = {
   FAL_KEY: process.env.EXPO_PUBLIC_FAL_KEY || '[CONFIGURAR_EN_VERCEL]',
   REPLICATE_API_TOKEN: process.env.EXPO_PUBLIC_REPLICATE_API_TOKEN || '[CONFIGURAR_EN_VERCEL]',
+  OPTIONAL_API_NAME: '',
+  OPTIONAL_API_KEY: '',
 };
 
 /**
@@ -30,9 +34,11 @@ const DEFAULT_API_KEYS = {
 export async function getApiKeysForExpo(): Promise<{
   FAL_KEY: string;
   REPLICATE_API_TOKEN: string;
+  OPTIONAL_API_NAME: string;
+  OPTIONAL_API_KEY: string;
 }> {
   try {
-    // 1. Intentar leer de AsyncStorage (si el usuario las configuró)
+    // 1. Intentar leer de AsyncStorage (si el usuario las configuró en Ajustes; persistente, no se borra al borrar perfil)
     const savedConfig = await AsyncStorage.getItem(API_CONFIG_KEY);
     if (savedConfig) {
       const parsed = JSON.parse(savedConfig);
@@ -41,6 +47,8 @@ export async function getApiKeysForExpo(): Promise<{
         return {
           FAL_KEY: parsed.FAL_KEY,
           REPLICATE_API_TOKEN: (parsed.REPLICATE_API_TOKEN && parsed.REPLICATE_API_TOKEN !== '[CONFIGURAR_EN_VERCEL]') ? parsed.REPLICATE_API_TOKEN : (process.env.EXPO_PUBLIC_REPLICATE_API_TOKEN || '[NO_CONFIGURADO]'),
+          OPTIONAL_API_NAME: parsed.OPTIONAL_API_NAME || '',
+          OPTIONAL_API_KEY: parsed.OPTIONAL_API_KEY || '',
         };
       }
     }
@@ -101,8 +109,10 @@ export async function getApiKeysForExpo(): Promise<{
       console.log('[API Keys] ✅ Usando keys de variables de entorno (.env.local o Vercel)');
       console.log('[API Keys] ========================================');
       return {
-        FAL_KEY: envFalKey.trim(), // Limpiar espacios
+        FAL_KEY: envFalKey.trim(),
         REPLICATE_API_TOKEN: (envReplicateToken && envReplicateToken !== '[CONFIGURAR_EN_VERCEL]') ? envReplicateToken.trim() : '[NO_CONFIGURADO]',
+        OPTIONAL_API_NAME: '',
+        OPTIONAL_API_KEY: '',
       };
     }
     
@@ -111,27 +121,32 @@ export async function getApiKeysForExpo(): Promise<{
     console.log('[API Keys] ========================================');
 
     // 3. Usar defaults (hardcodeadas en el código o placeholders)
-    console.log('[API Keys] Usando keys por defecto (configurar en Vercel)');
-    return DEFAULT_API_KEYS;
+    console.log('[API Keys] Usando keys por defecto (configurar en Ajustes o Vercel)');
+    return { ...DEFAULT_API_KEYS, OPTIONAL_API_NAME: '', OPTIONAL_API_KEY: '' };
   } catch (error) {
     console.error('Error leyendo API keys:', error);
-    return DEFAULT_API_KEYS;
+    return { ...DEFAULT_API_KEYS, OPTIONAL_API_NAME: '', OPTIONAL_API_KEY: '' };
   }
 }
 
 /**
- * Guarda las API keys (útil para que el usuario las configure)
+ * Guarda las API keys (persistentes: no se borran al borrar perfil).
+ * Incluye API opcional (ej. Grok, Wan) configurable desde Ajustes.
  */
 export async function saveApiKeysForExpo(
   falKey: string,
-  replicateToken: string
+  replicateToken: string,
+  optionalApiName: string = '',
+  optionalApiKey: string = ''
 ): Promise<void> {
   try {
     await AsyncStorage.setItem(API_CONFIG_KEY, JSON.stringify({
       FAL_KEY: falKey,
-      REPLICATE_API_TOKEN: replicateToken
+      REPLICATE_API_TOKEN: replicateToken,
+      OPTIONAL_API_NAME: optionalApiName.trim(),
+      OPTIONAL_API_KEY: optionalApiKey.trim(),
     }));
-    console.log('✅ API keys guardadas en AsyncStorage');
+    console.log('✅ API keys guardadas en AsyncStorage (persistentes)');
   } catch (error) {
     console.error('Error guardando en AsyncStorage:', error);
   }

@@ -26,7 +26,7 @@ const COMMANDS_BY_SCREEN: Record<string, CommandCategory[]> = {
   ],
   '/mirror': [
     { label: 'Prenda', commands: ['ADAPTAR', 'FAVORITO'] },
-    { label: 'Ver', commands: ['COMPARACIÓN', 'CARRUSEL', '360°'] },
+    { label: 'Ver', commands: ['COMPARACIÓN', 'CARRUSEL', '360', 'SÍ QUIERO'] },
     { label: 'Acción', commands: ['COMPARTIR', 'CATÁLOGO'] },
   ],
   '/profile': [
@@ -82,7 +82,7 @@ export function VoiceCommandSuggestions() {
             <View style={styles.commandsRow}>
               {category.commands.map((cmd, cmdIndex) => (
                 <View key={cmdIndex} style={styles.commandChip}>
-                  <Text style={styles.commandText}>{cmd}</Text>
+                  <Text style={styles.commandText}>{cmd === 'ADAPTADOR' ? 'ADAPTAR' : cmd}</Text>
                 </View>
               ))}
             </View>
@@ -93,7 +93,7 @@ export function VoiceCommandSuggestions() {
       {lastCommand ? (
         <View style={styles.lastCommand}>
           <Text style={styles.lastCommandLabel}>✓</Text>
-          <Text style={styles.lastCommandText}>{lastCommand}</Text>
+          <Text style={styles.lastCommandText}>{lastCommand === 'adaptador' || lastCommand === 'ADAPTADOR' ? 'ADAPTAR' : lastCommand}</Text>
         </View>
       ) : null}
     </Animated.View>

@@ -54,7 +54,7 @@ const AnimatedImage = Animated.createAnimatedComponent(Image as any);
 
 export default function MirrorScreen() {
   const router = useRouter();
-  const { scanData, triedItems, markItemAsShared, addTriedItem, isFavorite, toggleFavorite, favorites, updateTriedItemWithComposite, pendingAutoTryOn, setPendingAutoTryOn, pendingCatalogItemId, setPendingCatalogItemId } = useApp();
+  const { scanData, triedItems, markItemAsShared, addTriedItem, isFavorite, toggleFavorite, favorites, updateTriedItemWithComposite, start360GenerationForItem, pendingAutoTryOn, setPendingAutoTryOn, pendingCatalogItemId, setPendingCatalogItemId } = useApp();
   const [show360Notification, setShow360Notification] = useState(false);
   const { isListening, startListening, stopListening, registerCommand, unregisterCommand, isSupported } = useVoice();
   const reportActivity = useReportActivity();
@@ -96,6 +96,8 @@ export default function MirrorScreen() {
   const scrollPositionLeft = useRef(new Animated.Value(0)).current;
   const scrollPositionRight = useRef(new Animated.Value(0)).current;
   const carouselIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const generatingForItemIdRef = useRef<string | null>(null);
+  const selectedItemIdRef = useRef<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -150,6 +152,7 @@ export default function MirrorScreen() {
 
   const lastTriedItem = triedItems.length > 0 ? triedItems[selectedItemIndex] : null;
   const frontPhoto = scanData?.photos?.[0];
+  selectedItemIdRef.current = lastTriedItem?.item.id ?? null;
   const sidePhoto = scanData?.photos?.[1];
   
   const mockSuggestions = useMemo(() => {
@@ -245,9 +248,11 @@ export default function MirrorScreen() {
     rotationAnim.setValue(0);
   };
 
-  const handleAiTryOn = useCallback(async () => {
+  const handleAiTryOn = useCallback(async (retryCount = 0) => {
     if (!lastTriedItem || !frontPhoto) return;
-    
+    const itemIdForRequest = lastTriedItem.item.id;
+    generatingForItemIdRef.current = itemIdForRequest;
+
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     }
@@ -384,10 +389,27 @@ export default function MirrorScreen() {
       
       const data = await response.json();
       const resultUri = `data:${data.image.mimeType};base64,${data.image.base64Data}`;
-      setAiResultImage(resultUri);
+      if (selectedItemIdRef.current === generatingForItemIdRef.current) {
+        setAiResultImage(resultUri);
+      }
+      generatingForItemIdRef.current = null;
       
     } catch (error: any) {
       console.error('AI Try On Error:', error);
+      const isNetworkError = (error?.message || '').toLowerCase().includes('failed to fetch') || (error?.message || '').toLowerCase().includes('fetch');
+      if (isNetworkError && retryCount < 1) {
+        if (Platform.OS !== 'web') {
+          Speech.speak('Reintentando la prueba virtual.', { language: 'es-ES', rate: 0.9 });
+        } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance('Reintentando la prueba virtual.');
+          u.lang = 'es-ES';
+          u.rate = 0.9;
+          window.speechSynthesis.speak(u);
+        }
+        await new Promise(r => setTimeout(r, 1500));
+        return handleAiTryOn(retryCount + 1);
+      }
+      generatingForItemIdRef.current = null;
       setAiResultImage(null);
       setShowUserOnly(true);
       const message = error?.message || 'No se pudo generar la prueba virtual. Puedes probar otra prenda desde el catálogo.';
@@ -495,33 +517,39 @@ export default function MirrorScreen() {
       console.log('Mirror: Composite image ready:', compositeImageUri);
 
       if (Platform.OS === 'web') {
+        const rawName = lastTriedItem.item.name || 'Prueba virtual';
+        const safeName = (rawName + '').replace(/[^a-zA-Z0-9\s\-_ñáéíóúüÑÁÉÍÓÚÜ]/g, '').trim().slice(0, 40) || 'Espejo-Probador';
+        const baseName = safeName.startsWith('Espejo') ? safeName : `Espejo-Probador-${safeName}`;
         if (navigator.share && navigator.canShare) {
           try {
             const blob = await fetch(compositeImageUri).then(r => r.blob());
-            const file = new File([blob], 'prueba-virtual.jpg', { type: 'image/jpeg' });
+            const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
+            const ext = mime === 'image/png' ? 'png' : 'jpg';
+            const fileName = `${baseName}.${ext}`;
+            const file = new File([blob], fileName, { type: mime });
             
             if (navigator.canShare({ files: [file] })) {
               await navigator.share({
-                title: 'Comparte tu prueba virtual',
+                title: `Espejo Probador - ${rawName}`,
                 text: shareMessage,
                 files: [file],
               });
               await markItemAsShared(lastTriedItem.item.id);
               if (!offered360Ref.current) {
                 offered360Ref.current = true;
-                speakMirrorConfirmation('Di 360 para ver todos los ángulos.');
+                speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
               }
               console.log('Shared successfully with image');
             } else {
               const link = document.createElement('a');
               link.href = compositeImageUri;
-              link.download = 'prueba-virtual.jpg';
+              link.download = fileName;
               link.click();
               alert('Imagen descargada. Ahora puedes compartirla desde tus archivos.');
               await markItemAsShared(lastTriedItem.item.id);
               if (!offered360Ref.current) {
                 offered360Ref.current = true;
-                speakMirrorConfirmation('¿Quieres ver cómo te queda desde todos los ángulos? Di 360.');
+                speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
               }
             }
           } catch (shareError: any) {
@@ -531,25 +559,25 @@ export default function MirrorScreen() {
             }
             const link = document.createElement('a');
             link.href = compositeImageUri;
-            link.download = 'prueba-virtual.jpg';
+            link.download = `${baseName}.jpg`;
             link.click();
             alert('Imagen descargada. Ahora puedes compartirla desde tus archivos.');
             await markItemAsShared(lastTriedItem.item.id);
             if (!offered360Ref.current) {
               offered360Ref.current = true;
-              speakMirrorConfirmation('Di 360 para ver todos los ángulos.');
+              speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
             }
           }
         } else {
           const link = document.createElement('a');
           link.href = compositeImageUri;
-          link.download = 'prueba-virtual.jpg';
+          link.download = `${baseName}.jpg`;
           link.click();
           alert('Imagen descargada. Ahora puedes compartirla desde tus archivos.');
           await markItemAsShared(lastTriedItem.item.id);
           if (!offered360Ref.current) {
             offered360Ref.current = true;
-            speakMirrorConfirmation('Di 360 para ver todos los ángulos.');
+            speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
           }
         }
       } else {
@@ -582,11 +610,23 @@ export default function MirrorScreen() {
           console.error('Error requesting media library permissions:', permError);
         }
         
-        console.log('Mirror: Launching Share dialog...');
+        const rawNameNative = lastTriedItem.item.name || 'Prueba virtual';
+        const safeNameNative = (rawNameNative + '').replace(/[^a-zA-Z0-9\s\-_ñáéíóúüÑÁÉÍÓÚÜ]/g, '').trim().slice(0, 40) || 'Espejo-Probador';
+        const shareFileName = safeNameNative.startsWith('Espejo') ? `${safeNameNative}.jpg` : `Espejo-Probador-${safeNameNative}.jpg`;
+        const cacheDir = FileSystemLegacy.cacheDirectory || '';
+        const shareFileUri = cacheDir + shareFileName;
+        let uriToShare = compositeImageUri;
+        try {
+          await FileSystemLegacy.copyAsync({ from: compositeImageUri, to: shareFileUri });
+          uriToShare = shareFileUri;
+        } catch (copyErr) {
+          console.warn('Mirror: Could not copy to named file, sharing original:', copyErr);
+        }
+        console.log('Mirror: Launching Share dialog with file:', uriToShare);
         const result = await Share.share({
           message: shareMessage,
-          url: compositeImageUri,
-          title: 'Comparte tu prueba virtual',
+          url: uriToShare,
+          title: `Espejo Probador - ${rawNameNative}`,
         });
 
         console.log('Mirror: Share result:', result.action);
@@ -594,7 +634,7 @@ export default function MirrorScreen() {
           await markItemAsShared(lastTriedItem.item.id);
           if (!offered360Ref.current) {
             offered360Ref.current = true;
-            speakMirrorConfirmation('Di 360 para ver todos los ángulos.');
+            speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
           }
           Alert.alert('¡Compartido!', 'Se compartió tu imagen con prueba virtual');
         }
@@ -697,26 +737,42 @@ export default function MirrorScreen() {
   const offered360Ref = useRef(false);
   const handleToggleFavoriteItem = useCallback(async () => {
     if (!lastTriedItem) return;
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    
-    let compositeImageUri = lastTriedItem.compositeImage;
-    if (!compositeImageUri) {
-      compositeImageUri = await captureAndSaveComposite();
-    }
-    
-    const wasFavorite = isFavorite(lastTriedItem.item.id);
-    await toggleFavorite(lastTriedItem.item, compositeImageUri ?? undefined);
-    
-    const message = wasFavorite 
-      ? 'Eliminado de favoritos' 
-      : 'Agregado a favoritos con tu imagen';
-    
-    if (!wasFavorite) {
-      if (!offered360Ref.current) {
+    try {
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+      
+      let compositeImageUri = lastTriedItem.compositeImage;
+      if (!compositeImageUri) {
+        compositeImageUri = await captureAndSaveComposite();
+      }
+      
+      const wasFavorite = isFavorite(lastTriedItem.item.id);
+      await toggleFavorite(lastTriedItem.item, compositeImageUri ?? undefined);
+      
+      const message = wasFavorite 
+        ? 'Eliminado de favoritos' 
+        : 'Agregado a favoritos con tu imagen';
+      
+      if (!wasFavorite) {
+        if (triedItems.length > 4) {
+          speakMirrorConfirmation('¿Quieres comparar o ver todo lo que has probado? Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
+          const triedWithComposite = triedItems
+          .filter(ti => ti.compositeImage)
+          .sort((a, b) => {
+            const aFav = favorites.some(f => f.id === a.item.id) ? 1 : 0;
+            const bFav = favorites.some(f => f.id === b.item.id) ? 1 : 0;
+            return bFav - aFav;
+          });
+        if (triedWithComposite.length >= 1) {
+          setCompareMode(true);
+          const idx = triedItems.findIndex(t => t.item.id === (triedWithComposite[0]?.item.id ?? ''));
+          setCompareItemIndex(idx >= 0 ? idx : 0);
+          setIsCarouselMode(triedWithComposite.length > 1);
+        }
+      } else if (!offered360Ref.current) {
         offered360Ref.current = true;
-        speakMirrorConfirmation('Di 360 para ver todos los ángulos.');
+        speakMirrorConfirmation('Di sí quiero si quieres ver cómo te queda desde todos los ángulos.');
       }
       if (Platform.OS !== 'web') {
         setTimeout(() => { Alert.alert('Favoritos', message); }, 2200);
@@ -730,7 +786,10 @@ export default function MirrorScreen() {
         Alert.alert('Favoritos', message);
       }
     }
-  }, [lastTriedItem, toggleFavorite, isFavorite, captureAndSaveComposite, speakMirrorConfirmation]);
+    } finally {
+      // Sin bloqueo de micrófono: el usuario puede decir "sí quiero" en cualquier momento
+    }
+  }, [lastTriedItem, toggleFavorite, isFavorite, captureAndSaveComposite, speakMirrorConfirmation, triedItems, favorites]);
 
   const toggleCompareMode = useCallback(async () => {
     if (Platform.OS !== 'web') {
@@ -825,18 +884,20 @@ export default function MirrorScreen() {
     useCallback(() => {
       reportActivity();
       voiceAnnouncementInProgressRef.current = false;
-      // Al volver a la pestaña Espejo: vista principal solo usuario, sin residuo de prenda anterior
-      setShowUserOnly(true);
-      setAiResultImage(null);
+      // Solo quitar el composite anterior cuando ENTRAMOS sin venir del catálogo.
+      // No poner showUserOnly(true) para que se vea el overlay de la prenda seleccionada (2.ª/3.ª).
+      if (!pendingCatalogItemId) {
+        setAiResultImage(null);
+        setShowUserOnly(false);
+      }
 
-      // On blur: mismo criterio; favoritos, prendas probadas y usuario se conservan en contexto
       return () => {
         setShowUserOnly(true);
         setAiResultImage(null);
         voiceAnnouncementInProgressRef.current = false;
         offered360Ref.current = false;
       };
-    }, [reportActivity])
+    }, [reportActivity, pendingCatalogItemId])
   );
 
   // Al llegar item del catálogo: mostrar TryOn (no usuario solo)
@@ -1078,35 +1139,61 @@ export default function MirrorScreen() {
       description: 'Abriendo tallas y medidas',
     });
 
+    // "360" solo abre la pestaña 360º si ya hay vista lista; no genera. Para generar: "sí quiero"
     registerCommand('go-360', {
       patterns: ['360', '360 grados', 'tres sesenta', 'ver 360', 'todos los angulos', 'todos los ángulos', 'vista 360', 'ir a 360', 'abrir 360', 'ver todos los angulos'],
       action: () => {
         setCompareMode(false);
         setCompareItemIndex(null);
-        const itemWithReady360 = triedItems.find(ti => ti.view360?.isReady && !ti.view360?.generating);
+        const current = lastTriedItem;
+        const itemWithReady360 = current?.view360?.isReady && !current.view360?.generating
+          ? current
+          : triedItems.find(ti => ti.view360?.isReady && !ti.view360?.generating);
         if (itemWithReady360) {
-          speakMirrorConfirmation('Abriendo vista 360.');
-          router.push('/(tabs)/tryon-360');
-        } else {
-          speakMirrorConfirmation('El video aún se está generando. Te llevaré automáticamente cuando termine.');
+          speakMirrorConfirmation('Abriendo vista de tres sesenta.');
+          router.push({ pathname: '/(tabs)/tryon-360', params: { itemId: itemWithReady360.item.id } });
+          return;
         }
+        speakMirrorConfirmation('Di sí quiero para generar la vista de tres sesenta de esta prenda.');
       },
-      description: '',
+      description: 'ir a pestaña 360º',
     });
-    registerCommand('accept-360', {
-      patterns: ['aceptar', 'acceptar', 'ver 360'],
-      action: () => {
+    // "Sí quiero" = solo generar video 360 de la prenda actual (prioridad sobre modo carrusel) y abrir 360º al terminar
+    registerCommand('si-quiero-360', {
+      patterns: ['sí quiero', 'si quiero', 'quiero', 'quiero generar 360', 'generar 360', 'sí generar', 'si generar'],
+      action: async () => {
         setCompareMode(false);
         setCompareItemIndex(null);
-        const itemWithReady360 = triedItems.find(ti => ti.view360?.isReady && !ti.view360?.generating);
-        if (itemWithReady360) {
-          speakMirrorConfirmation('Abriendo vista 360.');
-          router.push('/(tabs)/tryon-360');
-        } else {
-          speakMirrorConfirmation('El video aún se está generando. Te llevaré automáticamente cuando termine.');
+        const current = lastTriedItem;
+        const needs360 = (ti: typeof triedItems[0]) => ti.compositeImage && !ti.view360?.generating && !ti.view360?.wanUrl && !ti.view360?.klingUrl;
+        const openTabWhenReady = (itemId?: string) => {
+          speakMirrorConfirmation('Vista de tres sesenta lista.');
+          router.push({ pathname: '/(tabs)/tryon-360', params: itemId ? { itemId } : {} });
+        };
+        if (current) {
+          if (needs360(current)) {
+            speakMirrorConfirmation('Preparando vista de tres sesenta. Se abrirá cuando esté lista.');
+            start360GenerationForItem(current.item.id, undefined, openTabWhenReady);
+            return;
+          }
+          if (!current.compositeImage && aiResultImage && !current.view360?.generating && !current.view360?.wanUrl && !current.view360?.klingUrl) {
+            speakMirrorConfirmation('Preparando vista de tres sesenta. Se abrirá cuando esté lista.');
+            const saved = await captureAndSaveComposite();
+            if (saved) {
+              start360GenerationForItem(current.item.id, saved, openTabWhenReady);
+            }
+            return;
+          }
         }
+        const itemToGenerate = triedItems.find(needs360);
+        if (itemToGenerate) {
+          speakMirrorConfirmation('Preparando vista de tres sesenta. Se abrirá cuando esté lista.');
+          start360GenerationForItem(itemToGenerate.item.id, undefined, openTabWhenReady);
+          return;
+        }
+        speakMirrorConfirmation('Primero prueba una prenda y luego di sí quiero para generar la vista de tres sesenta.');
       },
-      description: '',
+      description: 'generar vista 360 y abrir al terminar',
     });
 
     registerCommand('compare-mode', {
@@ -1331,7 +1418,7 @@ export default function MirrorScreen() {
       unregisterCommand('catalog');
       unregisterCommand('tallas-medidas');
       unregisterCommand('go-360');
-      unregisterCommand('accept-360');
+      unregisterCommand('si-quiero-360');
       unregisterCommand('catalog-by-item-name');
       unregisterCommand('compare-mode');
       unregisterCommand('ver-lo-probado');
@@ -1348,7 +1435,7 @@ export default function MirrorScreen() {
       unregisterCommand('carousel-faster');
       unregisterCommand('carousel-slower');
     };
-  }, [lastTriedItem, frontPhoto, isAutoRotating, selectedItemIndex, triedItems.length, isAutoScrolling, isGeneratingTryOn, isCarouselMode, registerCommand, unregisterCommand, router, handleShareResult, handleToggleFavoriteItem, handleSelectTriedItem, startAutoRotation, stopAutoRotation, toggleCompareMode, toggleAutoScroll, handleAiTryOn, speakMirrorConfirmation, triedItems, captureAndSaveComposite]);
+  }, [lastTriedItem, frontPhoto, isAutoRotating, selectedItemIndex, triedItems.length, isAutoScrolling, isGeneratingTryOn, isCarouselMode, registerCommand, unregisterCommand, router, handleShareResult, handleToggleFavoriteItem, handleSelectTriedItem, startAutoRotation, stopAutoRotation, toggleCompareMode, toggleAutoScroll, handleAiTryOn, speakMirrorConfirmation, triedItems, captureAndSaveComposite, start360GenerationForItem, aiResultImage]);
 
   const toggleVoiceCommands = () => {
     if (isListening) {
@@ -1568,18 +1655,18 @@ export default function MirrorScreen() {
                   }
                 ]}
               >
-                {(showUserOnly && frontPhoto) ? (
+                {aiResultImage ? (
                   <View style={styles.photoWrapper}>
                     <Image 
-                      source={{ uri: frontPhoto }}
+                      source={{ uri: aiResultImage }}
                       style={styles.userPhoto}
                       contentFit="cover"
                     />
                   </View>
-                ) : aiResultImage ? (
+                ) : (showUserOnly && frontPhoto) ? (
                   <View style={styles.photoWrapper}>
                     <Image 
-                      source={{ uri: aiResultImage }}
+                      source={{ uri: frontPhoto }}
                       style={styles.userPhoto}
                       contentFit="cover"
                     />
@@ -1629,6 +1716,7 @@ export default function MirrorScreen() {
                     />
                   )}
                     <Image 
+                      key={lastTriedItem.item.id}
                       source={{ uri: lastTriedItem.item.image }}
                       style={[
                         styles.clothingOverlay,
@@ -1764,7 +1852,7 @@ export default function MirrorScreen() {
                       onPress={isAutoRotating ? stopAutoRotation : startAutoRotation}
                     >
                       <RotateCw size={28} color="#FFFFFF" />
-                      <Text style={styles.rotateText}>{isAutoRotating ? 'Detener' : 'Vista 360°'}</Text>
+                      <Text style={styles.rotateText}>{isAutoRotating ? 'Detener' : 'Rotar'}</Text>
                     </TouchableOpacity>
                     
                     <TouchableOpacity 
@@ -2119,7 +2207,7 @@ export default function MirrorScreen() {
               style={styles.notification360Button}
               onPress={() => {
                 setShow360Notification(false);
-                router.push('/(tabs)/tryon-360');
+                router.push({ pathname: '/(tabs)/tryon-360', params: lastTriedItem ? { itemId: lastTriedItem.item.id } : {} });
               }}
             >
               <Sparkles size={20} color="#000000" />
@@ -2129,7 +2217,7 @@ export default function MirrorScreen() {
               style={styles.notification360Close}
               onPress={() => {
                 if (Platform.OS !== 'web') {
-                  Speech.speak('Perfecto, puedes seguir probando prendas. Cuando quieras ver todos los ángulos, ve a la pestaña 360 grados.', {
+                  Speech.speak('Perfecto, puedes seguir probando prendas. Cuando quieras ver todos los ángulos, ve a la pestaña de tres sesenta grados.', {
                     language: 'es-ES',
                     rate: 0.95,
                   });
@@ -2293,6 +2381,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '22%',
     left: '22.5%',
+    zIndex: 2,
+    elevation: 2,
   },
   mirrorOverlay: {
     position: 'absolute',

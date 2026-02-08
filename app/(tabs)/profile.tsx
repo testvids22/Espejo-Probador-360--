@@ -15,7 +15,7 @@ import { useReportActivity } from '@/components/InactivityScreensaver';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { triedItems, favorites, scanData, sizeDetectorData, clearScanData, clearAllProfileData, toggleFavorite, addTriedItem, userProfile, profiles, updateUserProfile, addProfile, switchProfile } = useApp();
+  const { triedItems, favorites, scanData, sizeDetectorData, clearScanData, clearAllProfileData, toggleFavorite, addTriedItem, userProfile, profiles, updateUserProfile, addProfile, switchProfile, getPersistentRecentTriesForInsights } = useApp();
   const { registerCommand, unregisterCommand, setGoogleCloudApiKey, isGoogleCloudConfigured } = useVoice();
   const reportActivity = useReportActivity();
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
@@ -32,6 +32,9 @@ export default function ProfileScreen() {
   const [isLoadingInsights, setIsLoadingInsights] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  const persistentRecentForInsights = getPersistentRecentTriesForInsights();
+  const hasDataForInsights = persistentRecentForInsights.length > 0 || triedItems.length > 0;
 
   const handleNotificationToggle = (value: boolean) => {
     if (Platform.OS !== 'web') {
@@ -96,17 +99,23 @@ export default function ProfileScreen() {
     await stopSpeaking();
     setIsLoadingInsights(true);
     try {
-      const historyText = triedItems.slice(0, 20).map((tried, idx) => 
-        `${idx + 1}. ${tried.item.brand} - ${tried.item.name} (${tried.item.category}) - ${tried.item.price}€ - Probado: ${new Date(tried.date).toLocaleDateString('es-ES')}`
-      ).join('\n');
+      const persistentRecent = getPersistentRecentTriesForInsights();
+      const historyText = persistentRecent.length > 0
+        ? persistentRecent.map((tried, idx) => 
+            `${idx + 1}. ${tried.brand} - ${tried.name} (${tried.category}) - ${tried.price}€ - Probado: ${new Date(tried.date).toLocaleDateString('es-ES')}`
+          ).join('\n')
+        : triedItems.slice(0, 20).map((tried, idx) => 
+            `${idx + 1}. ${tried.item.brand} - ${tried.item.name} (${tried.item.category}) - ${tried.item.price}€ - Probado: ${new Date(tried.date).toLocaleDateString('es-ES')}`
+          ).join('\n');
 
+      const totalTriesForPrompt = persistentRecent.length > 0 ? persistentRecent.length : triedItems.length;
       const favoritesText = favorites.slice(0, 10).map((item, idx) => 
         `${idx + 1}. ${item.brand} - ${item.name} (${item.category}) - ${item.price}€`
       ).join('\n');
 
       const prompt = `Eres un asesor de moda profesional. Analiza el historial de pruebas y favoritos del usuario para proporcionar insights personalizados.
 
-Historial de prendas probadas (${triedItems.length} total):
+Historial de prendas probadas (${totalTriesForPrompt} total):
 ${historyText}
 
 Prendas favoritas (${favorites.length} total):
@@ -251,7 +260,8 @@ Haz el análisis conciso, profesional y útil (máximo 200 palabras).`;
       patterns: ['opinión profesional', 'opinión', 'análisis profesional', 'asesoría', 'consejos'],
       action: () => {
         setActiveTab('insights');
-        if (!insights && triedItems.length > 0 && !isLoadingInsights) {
+        const hasData = getPersistentRecentTriesForInsights().length > 0 || triedItems.length > 0;
+        if (!insights && hasData && !isLoadingInsights) {
           generateInsights();
         }
       },
@@ -459,7 +469,7 @@ Haz el análisis conciso, profesional y útil (máximo 200 palabras).`;
                 <TouchableOpacity 
                   style={styles.generateButton}
                   onPress={generateInsights}
-                  disabled={isLoadingInsights || triedItems.length === 0}
+                  disabled={isLoadingInsights || !hasDataForInsights}
                 >
                   {isLoadingInsights ? (
                     <ActivityIndicator color="#FFFFFF" />
@@ -470,7 +480,7 @@ Haz el análisis conciso, profesional y útil (máximo 200 palabras).`;
                     </>
                   )}
                 </TouchableOpacity>
-                {triedItems.length === 0 && (
+                {!hasDataForInsights && (
                   <Text style={styles.insightsHint}>Necesitas probar al menos una prenda</Text>
                 )}
               </View>

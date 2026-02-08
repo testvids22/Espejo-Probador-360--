@@ -3,7 +3,7 @@ const path = require('path');
 
 const root = process.cwd();
 
-// Limpiar caché
+// Limpiar caché (evita "Unable to deserialize cloned data" de Metro)
 const dirs = [
   path.join(root, '.expo'),
   path.join(root, 'node_modules', '.cache'),
@@ -33,4 +33,4 @@ if (fs.existsSync(src)) {
   }
 }
 
-console.log('Caché limpiada. Arrancando en puerto 5062...');
+console.log('Caché limpiada. Arrancando en puerto 5064...');

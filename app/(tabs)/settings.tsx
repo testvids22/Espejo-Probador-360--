@@ -52,6 +52,8 @@ export default function SettingsScreen() {
   const reportActivity = useReportActivity();
   const [falKey, setFalKey] = useState('');
   const [replicateToken, setReplicateToken] = useState('');
+  const [optionalApiName, setOptionalApiName] = useState('');
+  const [optionalApiKey, setOptionalApiKey] = useState('');
   const [androidPermissionsJson, setAndroidPermissionsJson] = useState('');
   const [rgpdEmail, setRgpdEmail] = useState('');
   const [rgpdTelefono, setRgpdTelefono] = useState('');
@@ -64,6 +66,8 @@ export default function SettingsScreen() {
     const keys = await getApiKeysForExpo();
     setFalKey(keys.FAL_KEY && keys.FAL_KEY.length > 20 ? keys.FAL_KEY : '');
     setReplicateToken(keys.REPLICATE_API_TOKEN && keys.REPLICATE_API_TOKEN !== '[NO_CONFIGURADO]' ? keys.REPLICATE_API_TOKEN : '');
+    setOptionalApiName(keys.OPTIONAL_API_NAME || '');
+    setOptionalApiKey(keys.OPTIONAL_API_KEY || '');
   }, []);
 
   const loadAndroidPermissions = useCallback(async () => {
@@ -118,7 +122,12 @@ export default function SettingsScreen() {
   );
 
   const handleSaveApiKeys = async () => {
-    await saveApiKeysForExpo(falKey.trim() || '[CONFIGURAR_EN_VERCEL]', replicateToken.trim() || '[CONFIGURAR_EN_VERCEL]');
+    await saveApiKeysForExpo(
+      falKey.trim() || '[CONFIGURAR_EN_VERCEL]',
+      replicateToken.trim() || '[CONFIGURAR_EN_VERCEL]',
+      optionalApiName.trim(),
+      optionalApiKey.trim()
+    );
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     if (Platform.OS !== 'web') Alert.alert('Guardado', 'Claves API guardadas.');
@@ -188,7 +197,7 @@ export default function SettingsScreen() {
       <View style={styles.header}>
         <Settings size={28} color={Colors.light.primary} />
         <Text style={styles.title}>Ajustes</Text>
-        <Text style={styles.subtitle}>API Keys, permisos Android y RGPD</Text>
+        <Text style={styles.subtitle}>API Keys, permisos Android y RGPD (se guardan de forma persistente)</Text>
       </View>
 
       {/* API Keys */}
@@ -197,6 +206,7 @@ export default function SettingsScreen() {
           <Key size={20} color={Colors.light.primary} />
           <Text style={styles.sectionTitle}>Claves API</Text>
         </View>
+        <Text style={styles.hint}>En web puedes usar aquí tus keys; en build se usan .env o Vercel. No se borran al borrar perfil.</Text>
         <Text style={styles.label}>FAL AI (obligatoria para TryOn y 360º)</Text>
         <TextInput
           style={styles.input}
@@ -215,6 +225,26 @@ export default function SettingsScreen() {
           placeholderTextColor={Colors.light.textSecondary}
           value={replicateToken}
           onChangeText={setReplicateToken}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+        />
+        <Text style={styles.label}>API opcional (ej. Grok, Wan): nombre</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Grok / Wan / otro"
+          placeholderTextColor={Colors.light.textSecondary}
+          value={optionalApiName}
+          onChangeText={setOptionalApiName}
+          autoCapitalize="none"
+        />
+        <Text style={styles.label}>API opcional: clave</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Clave de la API opcional"
+          placeholderTextColor={Colors.light.textSecondary}
+          value={optionalApiKey}
+          onChangeText={setOptionalApiKey}
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry

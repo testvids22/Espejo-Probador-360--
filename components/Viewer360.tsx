@@ -467,13 +467,7 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
         setWanProgress(100);
         toast.success('Vista Fashion lista');
         
-        // Anuncio por voz (solo en móvil)
-        if (Platform.OS !== 'web') {
-          Speech.speak('¡Perfecto! Ya puedes ver cómo te queda desde todos los ángulos. Preparando el video completo para que puedas ver el giro completo de la prenda.', {
-            language: 'es-ES',
-            rate: 0.9,
-          });
-        }
+        // No anunciar por voz "Preparando vista 360/video completo" si el usuario no pidió "360"
         
         // Iniciar 360º después de Fashion (con delay para no sobrecargar)
         setTimeout(() => {
@@ -730,6 +724,10 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
   extractFramesFromVideoRef.current = extractFramesFromVideo;
 
   const handleShare = useCallback(async () => {
+    const rawName = clothingItemName || 'Vista 360';
+    const safeName = (rawName + '').replace(/[^a-zA-Z0-9\s\-_ñáéíóúüÑÁÉÍÓÚÜ]/g, '').trim().slice(0, 30) || 'Espejo-360';
+    const baseNameVideo = safeName.startsWith('Espejo') ? safeName : `Espejo-360-${safeName}`;
+    const baseNameImage = safeName.startsWith('Espejo') ? safeName : `Espejo-360-${safeName}`;
     try {
       const videoUrl = klingVideoUrl || fashionSpinUrl;
       // Compartir VIDEO 360º generado (no imagen)
@@ -738,10 +736,12 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
           try {
             const res = await fetch(videoUrl, { mode: 'cors' });
             const blob = await res.blob();
-            const file = new File([blob], 'video-360.mp4', { type: 'video/mp4' });
+            const mime = blob.type && blob.type.startsWith('video/') ? blob.type : 'video/mp4';
+            const fileName = `${baseNameVideo}.mp4`;
+            const file = new File([blob], fileName, { type: mime });
             if (navigator.share && navigator.canShare?.({ files: [file] })) {
               await navigator.share({
-                title: 'Video 360º',
+                title: `Video 360º - ${rawName}`,
                 text: 'Mira cómo me queda desde todos los ángulos',
                 files: [file],
               });
@@ -750,17 +750,16 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
               throw new Error('Share not available');
             }
           } catch (fetchErr) {
-            // CORS o share no disponible: descarga directa
             const a = document.createElement('a');
             a.href = videoUrl;
-            a.download = 'video-360.mp4';
+            a.download = `${baseNameVideo}.mp4`;
             a.target = '_blank';
             a.rel = 'noopener';
             a.click();
             toast.success('Video descargado');
           }
         } else {
-          const uri = FileSystem.documentDirectory + 'video-360.mp4';
+          const uri = FileSystem.documentDirectory + `${baseNameVideo}.mp4`;
           await FileSystem.downloadAsync(videoUrl, uri);
           const isAvailable = await Sharing.isAvailableAsync();
           if (isAvailable) {
@@ -778,10 +777,13 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
         if (imageUrl.startsWith('data:')) {
           const res = await fetch(imageUrl);
           const blob = await res.blob();
-          const file = new File([blob], 'vista-360.jpg', { type: 'image/jpeg' });
+          const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
+          const ext = mime === 'image/png' ? 'png' : 'jpg';
+          const fileName = `${baseNameImage}.${ext}`;
+          const file = new File([blob], fileName, { type: mime });
           if (navigator.share && navigator.canShare?.({ files: [file] })) {
             await navigator.share({
-              title: 'Vista 360º',
+              title: `Vista 360º - ${rawName}`,
               text: 'Mira cómo me queda desde todos los ángulos',
               files: [file],
             });
@@ -789,32 +791,45 @@ export function Viewer360({ tryOnImageUrl, clothingItemName, onBack, triedItemId
           } else {
             const a = document.createElement('a');
             a.href = imageUrl;
-            a.download = 'vista-360.jpg';
+            a.download = fileName;
             a.click();
             toast.success('Imagen descargada');
           }
         } else {
           const a = document.createElement('a');
           a.href = imageUrl;
-          a.download = 'vista-360.jpg';
+          a.download = `${baseNameImage}.jpg`;
           a.target = '_blank';
           a.click();
           toast.success('Imagen descargada');
         }
       } else {
         const isAvailable = await Sharing.isAvailableAsync();
-        if (isAvailable) {
+        if (!isAvailable) {
+          toast.error('Compartir no disponible');
+          return;
+        }
+        const shareFileName = `${baseNameImage}.jpg`;
+        const localUri = FileSystem.cacheDirectory + shareFileName;
+        try {
+          if (imageUrl.startsWith('data:')) {
+            const base64 = imageUrl.split(',')[1] || imageUrl;
+            await FileSystem.writeAsStringAsync(localUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+          } else {
+            await FileSystem.downloadAsync(imageUrl, localUri);
+          }
+          await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg' });
+          toast.success('¡Compartido!');
+        } catch (shareErr) {
           await Sharing.shareAsync(imageUrl);
           toast.success('¡Compartido!');
-        } else {
-          toast.error('Compartir no disponible');
         }
       }
     } catch (error) {
       console.error('Error sharing:', error);
       toast.error('Error al compartir');
     }
-  }, [klingVideoUrl, fashionSpinUrl, carouselFrames, currentFrame, tryOnImageUrl]);
+  }, [klingVideoUrl, fashionSpinUrl, carouselFrames, currentFrame, tryOnImageUrl, clothingItemName]);
 
   // Comando de voz: "compartir" = compartir video 360º
   useEffect(() => {
