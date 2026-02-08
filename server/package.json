@@ -1,0 +1,15 @@
+{
+  "name": "local-server",
+  "version": "1.0.0",
+  "description": "Servidor HTTP local para WebView - RORK + Orchids integrados",
+  "main": "local-server.js",
+  "scripts": {
+    "start": "node local-server.js"
+  },
+  "dependencies": {
+    "http": "*",
+    "fs": "*",
+    "path": "*",
+    "child_process": "*"
+  }
+}
